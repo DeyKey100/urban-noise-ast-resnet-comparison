@@ -1,0 +1,399 @@
+\documentclass[pdflatex,sn-mathphys-num]{sn-jnl}
+
+\usepackage[T2A]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english,russian]{babel}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\usepackage{mathrsfs}
+\usepackage[title]{appendix}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{manyfoot}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{placeins}
+\usepackage{pgfplots}
+\usepackage{etoolbox}
+\pgfplotsset{compat=1.18}
+
+\makeatletter
+\patchcmd{\@maketitle}
+  {\@title\par}
+  {\@title\par\vspace*{1cm}}
+  {\patchcmd{\@maketitle}{\@title}{\@title\vspace*{1cm}}{}{}}
+\makeatother
+
+\geometry{
+    a4paper,
+    twoside=false,
+    bindingoffset=0mm,
+    left=30mm,
+    right=15mm,
+    top=20mm,
+    bottom=20mm,
+    headsep=10mm,
+    footskip=10mm
+}
+
+\setlength{\aboverulesep}{0pt}
+\setlength{\belowrulesep}{0pt}
+\renewcommand{\arraystretch}{1.25}
+\raggedbottom
+
+\begin{document}
+
+\title[Анализ архитектур нейронных сетей для классификации городского шума]{\textbf{АНАЛИЗ АРХИТЕКТУР НЕЙРОННЫХ СЕТЕЙ ДЛЯ КЛАССИФИКАЦИИ ГОРОДСКОГО ШУМА В ЗАДАЧАХ МОНИТОРИНГА АКУСТИЧЕСКОГО ЗАГРЯЗНЕНИЯ}}
+
+\author{\sur{Колесников} \fnm{Дмитрий Максимович}}
+
+\affil{\orgdiv{Институт математики, механики и компьютерных наук им.~И.\,И.~Воровича, направление ФИИТ 2-2}, \orgname{Южный федеральный университет}, \orgaddress{\city{г. Ростов-на-Дону}}}
+
+\abstract{Уровень звука в децибелах характеризует акустическую нагрузку, но не позволяет установить, чем она вызвана: транспортом, строительным инструментом или другими источниками. Для выбора мер снижения шума системе мониторинга нужна классификация звуковых событий. Мы сопоставляем два готовых классификатора на базе Audio Spectrogram Transformer (AST) и ResNet34 на UrbanSound8K, содержащем 8\,732 аудиофрагмента десяти классов. Оценка разделена на полный корпус (фолды 1--10) и выделенный fold 10: первая характеризует поведение чекпоинтов на всём наборе, вторая исключает из оценки AST фолды, использованные при его дообучении. На fold 10 AST достигает Accuracy 0,8913 и Macro F1 0,9039; преимущество над ResNet34 по Accuracy составляет 12,19 процентного пункта, а 95\%-й парный бутстрап-интервал разности не включает нуль. Более высокая оценка AST на полном корпусе не служит независимой мерой обобщения. В ошибках ResNet34 на полном наборе выделяется смешение отбойного молотка (\texttt{jackhammer}) со сверлением (\texttt{drilling}). Сходство локальной широкополосной структуры этих сигналов даёт акустическое объяснение путанице; доступ AST к удалённым спектральным патчам позволяет использовать временной рисунок ударов, хотя его роль требует отдельной проверки. Результаты описывают компромисс между качеством исследованного AST с 86,2 млн параметров и компактностью ResNet34 с 21,8 млн параметров, но не отделяют влияние архитектуры от предобработки и истории обучения чекпоинтов.}
+
+\keywords{классификация городского шума, акустический мониторинг, UrbanSound8K, Audio Spectrogram Transformer, ResNet34, свёрточные нейронные сети, мел-спектрограмма, глубокое обучение.}
+
+\maketitle
+\newpage
+
+\section{Введение}\label{sec:intro}
+
+Измеренный уровень звука в децибелах не указывает, какой источник создаёт акустическую нагрузку. Для городского мониторинга это принципиальное ограничение: транспортный поток и строительные работы требуют разных мер снижения шума, даже если показания шумомера близки. Длительное воздействие окружающего шума связано с доказанными рисками для здоровья населения~\cite{ref1}, поэтому в современных системах мониторинга измерение уровня дополняют автоматическим распознаванием источников звуковых событий непосредственно в сенсорных узлах~\cite{ref2}.
+
+Для разработки и сопоставления таких классификаторов широко используется размеченный корпус UrbanSound8K~\cite{ref3,ref4}, содержащий 8\,732 аудиофрагмента длительностью до четырёх секунд, разделённых на десять классов и десять заранее сформированных частей (фолдов). Наличие стандартного разбиения позволяет отделять тестовые записи от обучающих, однако при работе с предобученными весами важно учитывать, какие фолды уже использовались при дообучении модели.
+
+Свёрточные нейронные сети (Convolutional Neural Networks, CNN) обрабатывают мел-спектрограмму как двумерное поле локальных признаков: короткие шумовые всплески, гармонические полосы и их границы выявляются свёрточными фильтрами, а более крупные зависимости формируются по мере углубления сети. Архитектура Audio Spectrogram Transformer (AST) реализует иной принцип: спектрограмма разбивается на патчи, между которыми вычисляется глобальное самовнимание~\cite{ref5}. Это открывает прямой доступ к удалённым участкам частотно-временного представления, что потенциально полезно для распознавания периодических ударов или меняющегося тона. Сравнения свёрточных и трансформерных моделей в задачах классификации городских и экологических звуков представлены в работах~\cite{ref6,ref7,ref8,ref12,ref13}.
+
+Практический выбор модели определяется не только точностью, но и ограничениями вычислительных узлов. В распределённой сети датчиков Интернета вещей~\cite{ref9} и устройствах класса TinyML~\cite{ref10} критичны объём памяти и задержка обработки, тогда как на стационарном сервере эти рамки мягче. Отдельное направление исследований посвящено выбору визуальных частотно-временных представлений аудиосигнала~\cite{ref11}. Опубликованные значения метрик из разных работ нельзя сопоставлять напрямую без учёта протокола: разбиения выборки, параметры мел-спектрограмм и режимы обучения существенно различаются.
+
+Объект исследования --- процесс автоматической классификации городских звуков по аудиозаписям. Предмет исследования --- архитектурные особенности и сравнительное качество классификации свёрточной нейронной сети ResNet34 и трансформерной модели AST на наборе данных UrbanSound8K.
+
+Цель работы --- сопоставить качество классификации городских звуков моделями на базе архитектур CNN (ResNet34) и AST на корпусе UrbanSound8K в рамках единого протокола оценки. Для достижения поставленной цели решаются следующие задачи:
+\begin{enumerate}
+    \item проанализировать современные подходы к автоматической классификации городских и экологических звуков;
+    \item сформировать тракты спектральной предобработки аудиозаписей UrbanSound8K, согласованные с исследуемыми моделями;
+    \item провести тестирование готовых классификаторов на полном корпусе данных (фолды 1--10) и на выделенном контрольном фолде (\texttt{fold 10});
+    \item количественно оценить качество классификации по метрикам Accuracy, Macro F1-score и парному бутстрап-интервалу разности точности;
+    \item выполнить анализ матриц ошибок и поклассовых характеристик с учётом акустической природы источников шума;
+    \item определить условия практической применимости рассмотренных моделей в системах городского мониторинга.
+\end{enumerate}
+
+Результаты работы ориентированы на выбор классифицирующего модуля системы акустического мониторинга. Такой модуль определяет категорию звукового события, но не измеряет уровень звукового давления в децибелах и не заменяет калиброванные шумомеры при проверке соблюдения санитарных нормативов.
+
+\section{Постановка задачи и методология исследования}\label{sec:methodology}
+
+\subsection{Формальная постановка задачи и предобработка сигнала}
+
+Пусть $\mathcal{D} = \{(x_i, y_i)\}_{i=1}^{N}$ --- размеченный корпус городских аудиозаписей UrbanSound8K~\cite{ref3,ref4}, где $N = 8\,732$, $x_i \in \mathbb{R}^{L_i}$ --- дискретный аудиосигнал длительностью до 4~с, а $y_i \in \mathcal{Y} = \{0, 1, \dots, C-1\}$ --- истинный класс акустического события при $C = 10$ (\texttt{air\_conditioner}, \texttt{car\_horn}, \texttt{children\_playing}, \texttt{dog\_bark}, \texttt{drilling}, \texttt{engine\_idling}, \texttt{gun\_shot}, \texttt{jackhammer}, \texttt{siren}, \texttt{street\_music}). Классификатор задаётся параметрическим отображением $f_{\theta}: \mathcal{X} \to \Delta^{C-1}$ из пространства аудиосигналов в симплекс вероятностей классов. Мы оцениваем качество этого отображения при фиксированных весах $\theta$ в режиме детерминированного инференса.
+
+На этапе спектральной предобработки временной ряд $x(n)$ переводится в частотно-временное представление с помощью оконного преобразования Фурье (STFT), где $w(n)$ --- весовое окно длины $N_{\text{win}}$, а $H$ --- шаг между кадрами:
+\begin{equation}\label{eq:stft}
+    X(t, k) = \sum_{n=0}^{N_{\text{win}}-1} x(n + tH)\, w(n)\, \exp\!\left(-j \frac{2\pi k n}{N_{\text{fft}}}\right),
+\end{equation}
+где $t$ --- индекс временного кадра, $k$ --- индекс частотного бина. Переход от линейной шкалы частот $f$ (Гц) к психоакустической мел-шкале $m$ выполняется по формуле:
+\begin{equation}\label{eq:mel}
+    m(f) = 2595 \cdot \log_{10}\!\left(1 + \frac{f}{700}\right).
+\end{equation}
+
+Каждый чекпоинт получает спектральное представление, соответствующее его штатному входному тракту:
+\begin{itemize}
+    \item для \texttt{ModelA} (AST) сигнал приводится к частоте дискретизации $f_s = 16\,000$~Гц; экстрактор \texttt{ASTFeatureExtractor} формирует $M = 128$ мел-полос и выполняет нормализацию по среднему и стандартному отклонению;
+    \item для \texttt{ModelB} (ResNet34) сигнал ресемплируется на частоту $f_s = 22\,050$~Гц. STFT вычисляется с окном $N_{\text{win}} = 2048$, перекрытием $1536$ отсчётов, шагом $H = 512$ и базой $N_{\text{fft}} = 2048$. Спектр мощности проходит через банк из $M = 128$ треугольных мел-фильтров $H_m(k)$, нормируется и переводится в логарифмическую шкалу:
+\end{itemize}
+\begin{equation}\label{eq:logmel}
+    E(m, t) = \sum_{k=0}^{N_{\text{fft}}/2} |X(t, k)|^2 H_m(k), \quad
+    S_{\text{dB}}(m, t) = 10 \cdot \log_{10}\!\left(\tilde{E}(m, t)\right),
+\end{equation}
+где $\tilde{E}(m, t)$ --- нормированная мощность мел-спектра, ограниченная снизу порогом численной стабильности. Эта относительная шкала признаков не является физическим измерением уровня звукового давления. Различие входных трактов сохранено намеренно: принудительная унификация параметров спектра без переобучения исказила бы условия работы готовых весов.
+
+\subsection{Исследуемые нейросетевые архитектуры}
+
+Сопоставляются два опубликованных чекпоинта, сохранённых в формате \texttt{safetensors}:
+\begin{enumerate}
+    \item \textbf{ModelA (Audio Spectrogram Transformer, AST)} --- трансформерная модель \texttt{Adam-ousse/ast-urbansound8k-finetuned-fold10}~\cite{ref5,ref14}, содержащая $86\,196\,490$ параметров ($\approx 86{,}2$~млн). Мел-спектрограмма разбивается на перекрывающиеся патчи $16 \times 16$, которые линейно проецируются в пространство размерности $d = 768$. К последовательности добавляются обучаемые позиционные эмбеддинги $E_{\text{pos}}$ и классификационный токен $[CLS]$. В каждом из 12 слоёв Transformer Encoder вычисляется многоголовое самовнимание (Multi-Head Self-Attention):
+    \begin{equation}\label{eq:attention}
+        \text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}\right)V,
+    \end{equation}
+    где $Q, K, V$ --- матрицы запросов, ключей и значений, а $d_k = d / h$ --- размерность одной головы внимания. Механизм связывает патчи независимо от их взаимного удаления по времени и частоте.
+    \item \textbf{ModelB (ResNet34)} --- свёрточная сеть с остаточными связями \texttt{gputrain/UrbanSound8K-model}~\cite{ref15}, насчитывающая $21\,837\,286$ параметров ($\approx 21{,}8$~млн). Спектрограмма обрабатывается как двумерное поле признаков каскадом остаточных блоков:
+    \begin{equation}\label{eq:resnet}
+        \mathbf{z}^{(l+1)} = \sigma\!\left(\mathcal{F}\!\left(\mathbf{z}^{(l)}, \{W_i^{(l)}\}\right) + W_s \mathbf{z}^{(l)}\right),
+    \end{equation}
+    где $\mathcal{F}$ --- композиция двумерных свёрток $3 \times 3$, пакетной нормализации (Batch Normalization) и нелинейности ReLU $\sigma(\cdot)$, а $W_s$ согласует размерности в обходной ветви. Отдельное ядро фиксирует локальную структуру спектра, однако эффективное рецептивное поле сети расширяется по мере увеличения глубины слоёв.
+\end{enumerate}
+
+\subsection{Метрики оценки качества и статистической значимости}
+
+Пусть $K = [K_{ij}]_{i,j=1}^{C}$ --- матрица ошибок, где элемент $K_{ij}$ равен числу записей истинного класса $i$, отнесённых классификатором к классу $j$. Общая доля верных ответов (Accuracy) определяется выражением:
+\begin{equation}\label{eq:acc}
+    \text{Accuracy} = \frac{\sum_{i=1}^{C} K_{ii}}{\sum_{i=1}^{C}\sum_{j=1}^{C} K_{ij}}.
+\end{equation}
+Точность ($\text{Precision}_c$) характеризует долю верных предсказаний среди всех отнесений к классу $c$, а полнота ($\text{Recall}_c$) --- долю найденных записей этого класса. Итоговая метрика Macro F1 усредняет поклассовые гармонические средние с равными весами:
+\begin{equation}\label{eq:macrof1}
+    \text{Precision}_c = \frac{K_{cc}}{\sum_{i=1}^{C} K_{ic}}, \quad
+    \text{Recall}_c = \frac{K_{cc}}{\sum_{j=1}^{C} K_{cj}}, \quad
+    \text{Macro F1} = \frac{1}{C} \sum_{c=1}^{C} \frac{2\,\text{Precision}_c \cdot \text{Recall}_c}{\text{Precision}_c + \text{Recall}_c}.
+\end{equation}
+
+Неопределённость разности $\Delta = \text{Accuracy}(\text{ModelA}) - \text{Accuracy}(\text{ModelB})$ оценивается непараметрическим парным бутстрапом: формируется $B = 2\,000$ выборок с возвращением объёма $N$ (или $N_{10}$ для десятого фолда), сохраняющих сопряжённые ответы обеих моделей на одних и тех же записях. Границы 95\%-го доверительного интервала определяются квантилями распределения $\{\Delta^{*(b)}\}_{b=1}^{B}$ уровней $0{,}025$ и $0{,}975$.
+
+\section{Проведение исследования}\label{sec:experiment}
+
+Для воспроизводимого сопоставления моделей реализован программный конвейер оценки на языке Python с использованием библиотек \texttt{torch}, \texttt{torchvision}, Hugging Face \texttt{transformers}, \texttt{safetensors}, \texttt{soundfile}, \texttt{scipy}, \texttt{numpy} и \texttt{Pillow}. Вычисления проводились на графическом ускорителе NVIDIA GeForce RTX 4060. Экспериментальная методика включает три последовательных этапа:
+
+\begin{enumerate}
+    \item \textbf{Инициализация и детерминированная загрузка весов.} Тензорные веса \texttt{ModelA}~\cite{ref14} и \texttt{ModelB}~\cite{ref15} загружаются из файлов формата \texttt{safetensors} без модификации архитектуры. Обе модели переводятся в режим оценки (\texttt{eval}): слои Dropout отключаются, а в слоях Batch Normalization фиксируются накопленные статистики. Дообучение или подбор гиперпараметров в протокол не входят.
+    \item \textbf{Двухконтурное формирование выборок.} Оценка проводится в двух аналитических срезах:
+    \begin{itemize}
+        \item на полном корпусе UrbanSound8K ($N = 8\,732$ записи, фолды 1--10) --- для описания суммарного профиля ошибок чекпоинтов на всём наборе данных;
+        \item изолированно на выделенном десятом фолде \texttt{fold 10} ($N_{10} = 837$ записей) --- для проверки обобщающей способности \texttt{ModelA} вне фолдов 1--9, которые использовались при дообучении этого чекпоинта~\cite{ref14}.
+    \end{itemize}
+    Такое разделение позволяет явно измерить смещение оценки, возникающее при попадании обучающих фолдов в тестовую совокупность. Для \texttt{ModelB} открытая документация чекпоинта~\cite{ref15} не детализирует разбиение фолдов при обучении, поэтому результат на \texttt{fold 10} трактуется как сопоставление фиксированных моделей на единой контрольной выборке.
+    \item \textbf{Инференс, расчёт метрик и статистическая верификация.} Для каждого аудиофайла формируется спектральное представление согласно параметрам раздела~\ref{sec:methodology} и вычисляется предсказанный класс $\hat{y}_i = \arg\max_c f_{\theta}(x_i)_c$. По сопряжённым векторам истинных и предсказанных меток строятся матрицы ошибок $K$, рассчитываются интегральные показатели Accuracy и Macro F1, поклассовые значения Precision, Recall и F1-score, ранжированный список наиболее частых смешений классов и 95\%-е парные бутстрап-интервалы разности Accuracy отдельно для полного корпуса и для \texttt{fold 10}.
+\end{enumerate}
+
+\newpage
+\section{Результаты и их обсуждение}\label{sec:results}
+
+\subsection{Сравнение интегральных показателей на полном наборе и на fold 10}
+
+Сводные показатели качества классификации и доверительные интервалы разности Accuracy приведены в табл.~\ref{tab:main_comparison} и сопоставлены на рис.~\ref{fig:metrics_comparison}. Для суждения о переносе AST на данные, не входившие в его дообучение, опорным является результат на выделенном фолде \texttt{fold 10}.
+
+\begin{table}[htbp]
+\caption{Сравнительные показатели качества классификации моделей ModelA (AST) и ModelB (ResNet34) на наборе данных UrbanSound8K}\label{tab:main_comparison}
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{|l|l|c|c|c|}
+\hline
+Выборка данных & Модель и архитектура & Accuracy & Macro F1 & Разница Accuracy ($\Delta$) \\
+\hline
+Полный набор & ModelA (AST~\cite{ref14}) & \textbf{0,9699} & \textbf{0,9706} & $+18{,}45$~п.\,п. \\
+($N = 8\,732$, folds 1--10) & ModelB (ResNet34~\cite{ref15}) & 0,7854 & 0,7932 & (95\% ДИ: $[+17{,}53;\, +19{,}37]$) \\
+\hline
+Выделенный фолд & ModelA (AST~\cite{ref14}) & \textbf{0,8913} & \textbf{0,9039} & $+12{,}19$~п.\,п. \\
+(\texttt{fold 10}, $N_{10} = 837$) & ModelB (ResNet34~\cite{ref15}) & 0,7694 & 0,7691 & (95\% ДИ: $[+9{,}08;\, +15{,}29]$) \\
+\hline
+\end{tabular}
+\end{table}
+\FloatBarrier
+
+В обоих режимах тестирования \texttt{ModelA} (AST) демонстрирует статистически значимое преимущество над \texttt{ModelB} (ResNet34): 95\%-е парные бутстрап-интервалы разности Accuracy строго положительны и не включают нуль. На \texttt{fold 10} разрыв составляет $+12{,}19$~п.\,п. по Accuracy и $+13{,}48$~п.\,п. по Macro F1. При этом переход от полного корпуса к отложенному десятому фолду сопровождается снижением Accuracy трансформера на $7{,}86$~п.\,п. (с $0{,}9699$ до $0{,}8913$). Поскольку чекпоинт AST дообучался на фолдах 1--9~\cite{ref14}, его высокая точность на полном корпусе отражает узнавание обучающих примеров, тогда как оценка на \texttt{fold 10} характеризует реальное обобщение в рамках принятого разбиения.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    ybar,
+    bar width=14pt,
+    width=0.92\textwidth,
+    height=6.8cm,
+    ymin=0.65, ymax=1.05,
+    ylabel={Значение метрики},
+    symbolic x coords={Полный набор (Accuracy), Полный набор (Macro F1), Fold 10 (Accuracy), Fold 10 (Macro F1)},
+    xtick=data,
+    x tick label style={font=\small, text width=2.8cm, align=center},
+    legend style={at={(0.5,1.03)}, anchor=south, legend columns=-1, font=\small},
+    nodes near coords,
+    nodes near coords style={font=\scriptsize, /pgf/number format/fixed, /pgf/number format/precision=4},
+    ymajorgrids=true,
+    grid style=dashed,
+]
+\addplot[fill=blue!65!white, draw=blue!80!black] coordinates {
+    (Полный набор (Accuracy), 0.9699)
+    (Полный набор (Macro F1), 0.9706)
+    (Fold 10 (Accuracy), 0.8913)
+    (Fold 10 (Macro F1), 0.9039)
+};
+\addplot[fill=orange!75!white, draw=orange!80!black] coordinates {
+    (Полный набор (Accuracy), 0.7854)
+    (Полный набор (Macro F1), 0.7932)
+    (Fold 10 (Accuracy), 0.7694)
+    (Fold 10 (Macro F1), 0.7691)
+};
+\legend{ModelA (AST), ModelB (ResNet34)}
+\end{axis}
+\end{tikzpicture}
+\caption{Сопоставление метрик Accuracy и Macro F1 для моделей ModelA (AST) и ModelB (ResNet34) на полном наборе UrbanSound8K и на выделенном фолде \texttt{fold 10}}\label{fig:metrics_comparison}
+\end{figure}
+\FloatBarrier
+
+\subsection{Детальный анализ матриц ошибок и поклассовых характеристик}
+
+Наиболее частые направления смешения классов на полном корпусе представлены в табл.~\ref{tab:top_errors} и на рис.~\ref{fig:error_bars}, а характерные поклассовые метрики --- в табл.~\ref{tab:class_metrics}. Доли в табл.~\ref{tab:top_errors} рассчитаны от общего числа ошибок каждой модели ($263$ у \texttt{ModelA} и $1\,874$ у \texttt{ModelB}).
+
+\begin{table}[htbp]
+\caption{Наиболее частые ошибки классификации (пары «истинный класс $\to$ предсказанный класс») на полном наборе UrbanSound8K (от общего числа ошибок: 263 у ModelA и 1\,874 у ModelB)}\label{tab:top_errors}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{|l|c|c|l|c|c|}
+\hline
+\multicolumn{3}{|c|}{ModelA (AST, всего 263 ошибки)} & \multicolumn{3}{c|}{ModelB (ResNet34, всего 1\,874 ошибки)} \\
+\hline
+Истинный $\to$ Предсказанный & Число & Доля & Истинный $\to$ Предсказанный & Число & Доля \\
+\hline
+\texttt{air\_conditioner} $\to$ \texttt{street\_music} & 32 & 12,17\% & \texttt{jackhammer} $\to$ \texttt{drilling} & \textbf{460} & 24,55\% \\
+\hline
+\texttt{drilling} $\to$ \texttt{jackhammer} & 32 & 12,17\% & \texttt{air\_conditioner} $\to$ \texttt{drilling} & 119 & 6,35\% \\
+\hline
+\texttt{gun\_shot} $\to$ \texttt{drilling} & 25 & 9,51\% & \texttt{engine\_idling} $\to$ \texttt{drilling} & 102 & 5,44\% \\
+\hline
+\texttt{jackhammer} $\to$ \texttt{drilling} & 20 & 7,60\% & \texttt{car\_horn} $\to$ \texttt{street\_music} & 86 & 4,59\% \\
+\hline
+\texttt{air\_conditioner} $\to$ \texttt{engine\_idling} & 19 & 7,22\% & \texttt{dog\_bark} $\to$ \texttt{children\_playing} & 82 & 4,38\% \\
+\hline
+\end{tabular}
+\end{table}
+\FloatBarrier
+
+В профиле ошибок \texttt{ModelA} отсутствует доминирующий провал на одном направлении: ни одна пара смешения не превышает 32 записей из 8\,732, а полнота распознавания (Recall) удерживается в диапазоне от $0{,}9278$ (\texttt{gun\_shot}) до $0{,}9920$ (\texttt{street\_music}). Более низкий F1-score у \texttt{street\_music} ($0{,}9608$) при почти единичной полноте вызван притоком ложных срабатываний из класса \texttt{air\_conditioner}, тогда как для коротких импульсов \texttt{gun\_shot} редкие пропуски сочетаются с высокой избирательностью положительных ответов ($\text{F1} = 0{,}9626$).
+
+\begin{table}[htbp]
+\caption{Характерные поклассовые показатели качества для исследуемых моделей на полном наборе UrbanSound8K}\label{tab:class_metrics}
+\footnotesize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{|l|l|c|c|p{6.0cm}|}
+\hline
+Модель & Класс звука & Recall & F1-score & Характер поведения классификатора \\
+\hline
+ModelA (AST) & \texttt{street\_music} & \textbf{0,9920} & 0,9608 & Максимальная полнота, минимум пропусков \\
+\hline
+ModelA (AST) & \texttt{gun\_shot} & 0,9278 & \textbf{0,9626} & Высокая точность при единичных пропусках коротких импульсов \\
+\hline
+ModelB (ResNet34) & \texttt{jackhammer} & \textbf{0,4770} & \textbf{0,6252} & Критический провал: 460 записей отнесены к \texttt{drilling} \\
+\hline
+ModelB (ResNet34) & \texttt{drilling} & 0,9570 & 0,6930 & Высокий Recall при низком Precision из-за ложных тревог \\
+\hline
+ModelB (ResNet34) & \texttt{car\_horn} & 0,6876 & 0,7440 & Смешение тональных гудков с \texttt{street\_music} (86 ошибок) \\
+\hline
+ModelB (ResNet34) & \texttt{children\_playing} & 0,9130 & 0,8521 & Высокая чувствительность при ложных притоках из \texttt{dog\_bark} \\
+\hline
+ModelB (ResNet34) & \texttt{gun\_shot} & 0,9198 & 0,9399 & Устойчивая детекция высокоамплитудных пиков \\
+\hline
+\end{tabular}
+\end{table}
+\FloatBarrier
+
+У свёрточной модели \texttt{ModelB} ошибки сконцентрированы вокруг класса \texttt{drilling}: к нему ошибочно отнесены 460 записей отбойного молотка (\texttt{jackhammer}, $24{,}55\%$ всех ошибок модели), а также 119 записей \texttt{air\_conditioner} и 102 записи \texttt{engine\_idling}. В результате полнота \texttt{jackhammer} падает до $0{,}4770$ ($\text{F1} = 0{,}6252$). Для самого класса \texttt{drilling} высокий показатель $\text{Recall} = 0{,}9570$ сопровождается низким F1-score ($0{,}6930$), поскольку массовые ложноположительные притоки снижают точность (Precision).
+
+Акустическая природа этой путаницы связана со сходством широкополосной шумовой текстуры отбойного молотка и дрели на коротких интервалах спектрограммы. Различие между ними проявляется прежде всего во временном рисунке: работа отбойного молотка формирует серию периодических ударных всплесков энергии, тогда как сверление даёт более стационарный спектр. Механизм глобального самовнимания~\eqref{eq:attention} позволяет AST напрямую сопоставлять удалённые во времени патчи четырёхсекундного фрагмента и улавливать периодичность ударов. Вместе с тем наблюдаемый разрыв между чекпоинтами нельзя приписать исключительно механизму внимания: на результат также влияют различия в частоте дискретизации, нормализации признаков и истории обучения моделей.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    xbar,
+    bar width=9pt,
+    width=0.62\textwidth,
+    height=6.2cm,
+    xmin=0, xmax=540,
+    xlabel={Количество ошибочно классифицированных записей},
+    xlabel style={font=\footnotesize},
+    symbolic y coords={
+        {AST: air\_cond -> engine (19)},
+        {AST: jackhammer -> drilling (20)},
+        {AST: gun\_shot -> drilling (25)},
+        {AST: drilling -> jackhammer (32)},
+        {AST: air\_cond -> music (32)},
+        {ResNet: dog\_bark -> children (82)},
+        {ResNet: car\_horn -> music (86)},
+        {ResNet: engine -> drilling (102)},
+        {ResNet: air\_cond -> drilling (119)},
+        {ResNet: jackhammer -> drilling (460)}
+    },
+    ytick=data,
+    y tick label style={font=\footnotesize},
+    xticklabel style={font=\footnotesize},
+    nodes near coords,
+    nodes near coords style={font=\footnotesize},
+    xmajorgrids=true,
+    grid style=dashed,
+]
+\addplot[fill=red!65!white, draw=red!80!black] coordinates {
+    (19,{AST: air\_cond -> engine (19)})
+    (20,{AST: jackhammer -> drilling (20)})
+    (25,{AST: gun\_shot -> drilling (25)})
+    (32,{AST: drilling -> jackhammer (32)})
+    (32,{AST: air\_cond -> music (32)})
+    (82,{ResNet: dog\_bark -> children (82)})
+    (86,{ResNet: car\_horn -> music (86)})
+    (102,{ResNet: engine -> drilling (102)})
+    (119,{ResNet: air\_cond -> drilling (119)})
+    (460,{ResNet: jackhammer -> drilling (460)})
+};
+\end{axis}
+\end{tikzpicture}
+\caption{Ранжированное распределение пяти наиболее частых ошибок классификации для моделей ModelA (AST) и ModelB (ResNet34) на полном наборе UrbanSound8K}\label{fig:error_bars}
+\end{figure}
+\FloatBarrier
+
+\newpage
+\subsection{Сопоставление с опубликованными исследованиями и практический выбор}
+
+Высокие показатели AST согласуются с результатами опубликованных исследований, демонстрирующих эффективность трансформерных моделей на частотно-временных представлениях звука~\cite{ref5,ref6,ref7,ref8,ref11,ref13}. Прямое численное ранжирование наших метрик относительно сторонних публикаций ограничено различиями в протоколах кросс-валидации и предобработки, однако сам характер преимущества над свёрточной базой воспроизводится устойчиво.
+
+При выборе модели для развёртывания в системе мониторинга решающим становится компромисс между точностью распознавания и вычислительной ёмкостью. Модель AST содержит $86{,}2$~млн параметров, что оправдывает её размещение на серверных и облачных узлах обработки данных. Сеть ResNet34 содержит $21{,}8$~млн параметров --- почти вчетверо меньше, что снижает требования к памяти для хранения весов при одинаковой разрядности. Тем не менее для периферийных устройств Интернета вещей и узлов TinyML~\cite{ref9,ref10} одного сокращения числа параметров недостаточно: необходимы измерения задержки и потребления оперативной памяти на целевом микроконтроллере, а сам чекпоинт ResNet34 требует дообучения с применением спектральной аугментации SpecAugment и перевзвешивания функций потерь (Focal Loss) для устранения систематической путаницы строительных шумов.
+
+\section{Заключение}\label{sec:conclusion}
+
+В работе выполнено экспериментальное сопоставление готовых нейросетевых классификаторов на базе архитектур Audio Spectrogram Transformer (\texttt{ModelA}) и ResNet34 (\texttt{ModelB}) на корпусе городских звуков UrbanSound8K. Полученные результаты позволяют сформулировать следующие основные выводы:
+\begin{enumerate}
+    \item На выделенном тестовом фолде \texttt{fold 10} ($N_{10} = 837$), исключённом из дообучения AST, трансформерная модель достигает $\text{Accuracy} = 0{,}8913$ и $\text{Macro F1} = 0{,}9039$, статистически значимо превосходя ResNet34 ($\text{Accuracy} = 0{,}7694$, $\text{Macro F1} = 0{,}7691$) на $+12{,}19$~п.\,п. по Accuracy (95\% ДИ $[+9{,}08;\, +15{,}29]$~п.\,п.). Более высокая оценка AST на полном корпусе ($0{,}9699$) обусловлена включением обучающих фолдов 1--9 и не может служить независимой мерой обобщения.
+    \item Анализ матриц ошибок показал, что основное снижение качества ResNet34 на полном наборе ($1\,874$ ошибки против $263$ у AST) вызвано смешением локально схожих широкополосных строительных и фоновых шумов, прежде всего отнесением 460 записей \texttt{jackhammer} к классу \texttt{drilling} (падение Recall класса \texttt{jackhammer} до $0{,}4770$). Модель AST удерживает полноту распознавания в интервале $0{,}9278$--$0{,}9920$ по всем десяти классам.
+    \item Практический выбор между рассмотренными чекпоинтами определяется местом развёртывания: AST ($86{,}2$~млн параметров) предпочтителен для серверных узлов мониторинга, тогда как более компактная архитектура ResNet34 ($21{,}8$~млн параметров) подходит в качестве базовой модели для периферийных вычислителей при условии устранения смещения на строительных классах.
+\end{enumerate}
+
+Перспективными направлениями дальнейших исследований являются полная 10-фолдовая кросс-валидация моделей при унифицированном спектральном тракте, аппаратное профилирование задержки инференса и расхода памяти на периферийных платформах, дистилляция знаний (Knowledge Distillation) из AST в легковесные архитектуры для устройств TinyML~\cite{ref9,ref10}, а также переход от классификации изолированных фрагментов к полифонической детекции перекрывающихся во времени городских звуковых событий (Sound Event Detection).
+
+\newpage
+\begin{thebibliography}{99}
+
+\bibitem{ref1}
+World Health Organization. Environmental Noise Guidelines for the European Region. -- Copenhagen : WHO Regional Office for Europe, 2018. -- 160~p. -- ISBN 978-92-890-5356-3. -- URL: \url{https://www.who.int/publications/i/item/9789289053563} (дата обращения: 07.11.2026).
+
+\bibitem{ref2}
+Maijala~P., Zhao~S., Heittola~T., Virtanen~T. Environmental noise monitoring using source classification in sensors // Applied Acoustics. -- 2018. -- Vol.~129. -- P.~258--267. -- DOI: 10.1016/j.apacoust.2017.08.006.
+
+\bibitem{ref3}
+Salamon~J., Jacoby~C., Bello~J.~P. A Dataset and Taxonomy for Urban Sound Research // Proceedings of the 22nd ACM International Conference on Multimedia. -- Orlando, FL, USA, 2014. -- P.~1041--1044. -- DOI: 10.1145/2647868.2655045.
+
+\bibitem{ref4}
+UrbanSound8K [Электронный ресурс] // Kaggle. -- URL: \url{https://www.kaggle.com/datasets/chrisfilo/urbansound8k} (дата обращения: 07.11.2026).
+
+\bibitem{ref5}
+Gong~Y., Chung~Y.-A., Glass~J.~R. AST: Audio Spectrogram Transformer // Proceedings of Interspeech 2021. -- Brno, Czech Republic, 2021. -- P.~571--575. -- DOI: 10.21437/Interspeech.2021-698.
+
+\bibitem{ref6}
+Nogueira~A.~F.~R., Oliveira~H.~S., Machado~J.~J.~M., Tavares~J.~M.~R.~S. Transformers for Urban Sound Classification---A Comprehensive Performance Evaluation // Sensors. -- 2022. -- Vol.~22, no.~22. -- Art.~8874. -- DOI: 10.3390/s22228874.
+
+\bibitem{ref7}
+Zhang~D., Zhong~Z., Xia~Y., Wang~Z., Xiong~W. An Automatic Classification System for Environmental Sound in Smart Cities // Sensors. -- 2023. -- Vol.~23, no.~15. -- Art.~6823. -- DOI: 10.3390/s23156823.
+
+\bibitem{ref8}
+Malaviya~P., Kumar~Y., Modi~N. Advancements in Environmental Sound Classification: Evaluating Machine Learning and Deep Learning Approaches on the UrbanSound8K // Proceedings of the Seventh International Conference on Image Information Processing (ICIIP). -- Solan, India, 2023. -- P.~900--905. -- DOI: 10.1109/ICIIP61524.2023.10537679.
+
+\bibitem{ref9}
+Domazetovska Markovska~S., Gavriloski~V., Pecioski~D., Anachkova~M., Shishkovski~D., Angjusheva Ignjatovska~A. Urban Sound Classification for IoT Devices in Smart City Infrastructures // Urban Science. -- 2025. -- Vol.~9, no.~12. -- Art.~517. -- DOI: 10.3390/urbansci9120517.
+
+\bibitem{ref10}
+Remolina Soto~M.~S., Amaya Guzm\'{a}n~B., Aya-Parra~P.~A., Perdomo~O.~J., Becerra-Fernandez~M., Sarmiento-Rojas~J. Intelligent Classification of Urban Noise Sources Using TinyML: Towards Efficient Noise Management in Smart Cities // Sensors. -- 2025. -- Vol.~25, no.~20. -- Art.~6361. -- DOI: 10.3390/s25206361.
+
+\bibitem{ref11}
+\c{C}{\i}nar~I. DeepSoundVisionNet: A new approach to urban sound classification using visual representations of audio signals // Engineering Applications of Artificial Intelligence. -- 2026. -- Vol.~170. -- Art.~114193. -- DOI: 10.1016/j.engappai.2026.114193.
+
+\bibitem{ref12}
+Albaji~A.~O., Rashid~R.~B.~A., Hamid~S.~Z.~A. Investigation on Machine Learning Approaches for Environmental Noise Classifications // Journal of Electrical and Computer Engineering. -- 2023. -- Vol.~2023. -- Art.~3615137. -- DOI: 10.1155/2023/3615137.
+
+\bibitem{ref13}
+Hossain~R., Forkan~M.~I.~U., Arefin~T.~B., Raquib~M., Uddin~M.~M., Ohi~M.~A. Urban Sound Classification for Smart City Noise Mitigation Using a Deep Learning Approach // Proceedings of the 4th IEEE International Conference on Interdisciplinary Approaches in Technology and Management for Social Innovation (IATMSI). -- 2026. -- P.~1--6. -- DOI: 10.1109/IATMSI68868.2026.11465457.
+
+\bibitem{ref14}
+Adam-ousse. ast-urbansound8k-finetuned-fold10 [Электронный ресурс] // Hugging Face. -- URL: \url{https://huggingface.co/Adam-ousse/ast-urbansound8k-finetuned-fold10} (дата обращения: 07.11.2026).
+
+\bibitem{ref15}
+gputrain. UrbanSound8K-model [Электронный ресурс] // Hugging Face. -- URL: \url{https://huggingface.co/gputrain/UrbanSound8K-model} (дата обращения: 07.11.2026).
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,39 @@
+# Virtual environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.matplotlib_cache/
+.cache/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Downloaded dataset and extracted audio
+Sounds/
+UrbanSound8K.csv
+
+# Generated and binary model artifacts
+*.safetensors
+*.pt
+*.pth
+*.onnx
+evaluation_results_fold10/
+
+# Article PDF and temporary Office/LaTeX files
+PDF/
+*.pdf
+~$*
+~WRL*.tmp
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+
+# OS metadata
+.DS_Store
+Thumbs.db
