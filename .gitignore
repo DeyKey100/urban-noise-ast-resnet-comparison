@@ -13,7 +13,6 @@ __pycache__/
 
 # Downloaded dataset and extracted audio
 Sounds/
-UrbanSound8K.csv
 
 # Generated and binary model artifacts
 *.safetensors
